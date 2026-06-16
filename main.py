@@ -21,6 +21,7 @@ from backtesting import Backtest
 from strategies.sma_crossover import SmaCrossover
 from strategies.bb_adx_strategy import BbAdxStrategy
 from strategies.high_breakout_adx import HighBreakoutAdx
+from strategies.basis_adx_strategy import BasisAdxStrategy
 
 
 # ── Data helpers ──────────────────────────────────────────────
@@ -134,6 +135,18 @@ def build_strategy_class(name: str, args) -> type:
                 "risk_pct": args.risk_pct,
             },
         )
+    elif name == "basis_adx":
+        return type(
+            "BasisAdxStrategyCustom",
+            (BasisAdxStrategy,),
+            {
+                "bb_period": args.bb_period,
+                "adx_period": args.adx_period,
+                "sl_multiple": args.sl_multiple,
+                "sl_period": args.sl_period,
+                "risk_pct": args.risk_pct,
+            },
+        )
     else:
         raise ValueError(f"Strategy tidak dikenal: {name}")
 
@@ -148,7 +161,7 @@ def main():
 
     # Global
     parser.add_argument(
-        "--strategy", choices=["sma", "bb_adx", "high_breakout"], default="high_breakout",
+        "--strategy", choices=["sma", "bb_adx", "high_breakout", "basis_adx"], default="high_breakout",
         help="Strategy to use (default: bb_adx)",
     )
     parser.add_argument(
@@ -232,7 +245,8 @@ def main():
     # ── Banner ──
     strat_name = {"sma": f"SMA{args.short_window} x SMA{args.long_window}",
                   "bb_adx": f"BB({args.bb_period},{args.bb_std}) + ADX({args.adx_period})",
-                  "high_breakout": f"Highest({args.hh_window}) + ADX({args.adx_period})"}[args.strategy]
+                  "high_breakout": f"Highest({args.hh_window}) + ADX({args.adx_period})",
+                  "basis_adx": f"Basis({args.bb_period}) + ADX({args.adx_period})"}[args.strategy]
 
     print(f"\n🚀 Backtester — {args.ticker}")
     print(f"   Strategy : {args.strategy} — {strat_name}")
