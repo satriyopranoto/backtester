@@ -127,8 +127,8 @@ class BbAdxStrategy(Strategy):
     * Close > Upper Bollinger Band
     * Low > Donchian SL
     * ADX > 25
-    * ADX > ADX[5] (ADX *rising*)
     * +DI > -DI
+    * +DI > +DI[5] (+DI *rising*)
 
     **Exit** (checked every bar while in position):
 
@@ -218,7 +218,7 @@ class BbAdxStrategy(Strategy):
         adx = float(self.adx_arr[idx])
         pdi = float(self.pdi_arr[idx])
         mdi = float(self.mdi_arr[idx])
-        adx_5ago = float(self.adx_arr[idx - 5]) if idx >= 5 else 0.0
+        pdi_5ago = float(self.pdi_arr[idx - 5]) if idx >= 5 else 0.0
 
         is_nan = np.isnan(adx) or np.isnan(pdi) or np.isnan(mdi)
 
@@ -253,8 +253,8 @@ class BbAdxStrategy(Strategy):
             and low > sl
             and not is_nan
             and adx > 25.0
-            and adx > adx_5ago        # ADX rising
             and pdi > mdi             # +DI above -DI
+            and pdi > pdi_5ago        # +DI rising
         ):
             # ── Risk-based position sizing ────────────────
             # risk_amount  = equity × (risk_pct / 100)
