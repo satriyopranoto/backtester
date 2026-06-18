@@ -31,8 +31,8 @@ class BasisAdxStrategy(Strategy):
     -----
     * Low > Donchian SL
     * Close > Basis (SMA of close over ``bb_period``)
+    * Basis > SMA 200 (long-term bullish trend confirmed)
     * ADX > 25
-    * ADX > ADX[5] (rising ADX)
     * +DI > -DI
     * +DI > +DI[5] (PDI rising)
 
@@ -78,7 +78,13 @@ class BasisAdxStrategy(Strategy):
             name="SL (Donchian)", overlay=True,
         )
 
-        # ── ADX / PDI / MDI (pre-computed → len-indexing) ─
+        # ── SMA 200 (long-term trend filter) ──
+        self.sma200 = self.I(
+            lambda arr: pd.Series(arr).rolling(200).mean().values,
+            self.data.Close, name="SMA200", overlay=True,
+        )
+
+        # ── ADX / PDI / MDI (pre-computed → len-indexing)
         self.adx_arr, self.pdi_arr, self.mdi_arr = calc_adx(
             np.asarray(self.data.High),
             np.asarray(self.data.Low),
@@ -105,8 +111,9 @@ class BasisAdxStrategy(Strategy):
         mdi = float(self.mdi_arr[idx])
 
         pdi_5ago = float(self.pdi_arr[idx - 5]) if idx >= 5 else 0.0
-        adx_5ago = float(self.adx_arr[idx - 5]) if idx >= 5 else 0.0
-        is_nan = np.isnan(adx) or np.isnan(pdi) or np.isnan(mdi)
+        sma200 = float(self.sma200[-1])
+        uptrend = basis > sma200       # short-term MA > long-term MA
+        is_nan = np.isnan(adx) or np.isnan(pdi) or np.isnan(mdi) or np.isnan(sma200)
 
         # ──────────────────────────────────────────────
         #  1. EXIT — when in a position
@@ -139,7 +146,7 @@ class BasisAdxStrategy(Strategy):
             and close > basis
             and not is_nan
             and adx > 25.0
-            and adx > adx_5ago        # ADX rising (genuine new trend)
+            and uptrend            # Basis > SMA 200 (bullish trend confirmed)
             and pdi > mdi
             and pdi > pdi_5ago
         ):
