@@ -145,7 +145,7 @@ class BasisAdxStrategy(Strategy):
             low > sl
             and close > basis
             and not is_nan
-            and adx > 25.0
+            and adx > 20.0
             and uptrend            # Basis > SMA 200 (bullish trend confirmed)
             and pdi > mdi
             and pdi > pdi_5ago
