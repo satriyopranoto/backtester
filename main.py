@@ -144,6 +144,7 @@ def build_strategy_class(name: str, args) -> type:
                 "adx_period": args.adx_period,
                 "sl_multiple": args.sl_multiple,
                 "sl_period": args.sl_period,
+                "tp_min_profit_pct": args.tp_min_profit_pct,
                 "risk_pct": args.risk_pct,
             },
         )

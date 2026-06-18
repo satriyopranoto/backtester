@@ -195,11 +195,8 @@ class BbAdxStrategy(Strategy):
             self.adx_period,
         )
 
-        # Register for plot only (the lambda returns the full array,
-        # but self.I() handles indexing for plotting).
-        self.I(lambda: self.adx_arr, name="ADX", overlay=False)
-        self.I(lambda: self.pdi_arr, name="+DI", overlay=False)
-        self.I(lambda: self.mdi_arr, name="-DI", overlay=False)
+        # Register for plot only — combined ADX/DI panel
+        self.I(lambda: pd.DataFrame({'ADX': self.adx_arr, '+DI': self.pdi_arr, '-DI': self.mdi_arr}), name="ADX/DI", overlay=False)
 
     # ────────────────────────────────────
     #  next()
@@ -219,6 +216,7 @@ class BbAdxStrategy(Strategy):
         pdi = float(self.pdi_arr[idx])
         mdi = float(self.mdi_arr[idx])
         pdi_5ago = float(self.pdi_arr[idx - 5]) if idx >= 5 else 0.0
+        adx_5ago = float(self.adx_arr[idx - 5]) if idx >= 5 else 0.0
 
         is_nan = np.isnan(adx) or np.isnan(pdi) or np.isnan(mdi)
 
@@ -253,6 +251,7 @@ class BbAdxStrategy(Strategy):
             and low > sl
             and not is_nan
             and adx > 25.0
+            and adx > adx_5ago        # ADX rising (genuine new trend)
             and pdi > mdi             # +DI above -DI
             and pdi > pdi_5ago        # +DI rising
         ):

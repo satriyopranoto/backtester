@@ -68,9 +68,7 @@ class HighBreakoutAdx(Strategy):
             np.asarray(self.data.Close),
             self.adx_period,
         )
-        self.I(lambda: self.adx_arr, name="ADX", overlay=False)
-        self.I(lambda: self.pdi_arr, name="+DI", overlay=False)
-        self.I(lambda: self.mdi_arr, name="-DI", overlay=False)
+        self.I(lambda: pd.DataFrame({'ADX': self.adx_arr, '+DI': self.pdi_arr, '-DI': self.mdi_arr}), name="ADX/DI", overlay=False)
 
     # ────────────────────────────────────
     #  next()

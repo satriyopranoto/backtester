@@ -4,11 +4,13 @@ Entry (all must be true on same bar):
   - Low > Donchian SL
   - Close > Basis (middle BB = SMA)
   - ADX > 25
+  - ADX > ADX[5]  (rising ADX)
   - +DI (PDI) > -DI (MDI)
   - PDI > PDI[5]  (rising PDI)
 
-Exit:
-  - High < current Donchian SL (trailing stop — no fixed entry_sl)
+Exit (same as BB+ADX):
+  - Cut Loss: Close < entry_sl (fixed SL at entry)
+  - Take Profit: floating > tp_min_profit_pct AND Close < current SL
 
 Sizing: risk-based (risk_pct % of equity / stop_distance).
 """
@@ -30,13 +32,15 @@ class BasisAdxStrategy(Strategy):
     * Low > Donchian SL
     * Close > Basis (SMA of close over ``bb_period``)
     * ADX > 25
+    * ADX > ADX[5] (rising ADX)
     * +DI > -DI
-    * +DI > +DI[5]  (PDI rising compared to 5 bars ago)
+    * +DI > +DI[5] (PDI rising)
 
-    Exit
-    ----
-    * **Trailing stop**: High < current Donchian SL.
-      No fixed entry_sl — SL recalculates every bar.
+    Exit (same as BB+ADX)
+    ---------------------
+    * **Cut Loss**: Close < entry_sl (fixed SL captured at entry time)
+    * **Take Profit**: unrealised P&L > ``tp_min_profit_pct`` **AND**
+      Close < current Donchian SL (trailing).
     """
 
     # ---- tunable parameters ----
@@ -44,9 +48,11 @@ class BasisAdxStrategy(Strategy):
     adx_period = 14
     sl_multiple = 2.8
     sl_period = 10
+    tp_min_profit_pct = 0.2      # percent
     risk_pct = 1.0                # % equity risked per trade
 
-    # ---- entry-state ----
+    # ---- entry-state (persist across next() calls) ----
+    _entry_sl: float | None = None
     _entry_price: float | None = None
 
     # ────────────────────────────────────
@@ -79,9 +85,7 @@ class BasisAdxStrategy(Strategy):
             np.asarray(self.data.Close),
             self.adx_period,
         )
-        self.I(lambda: self.adx_arr, name="ADX", overlay=False)
-        self.I(lambda: self.pdi_arr, name="+DI", overlay=False)
-        self.I(lambda: self.mdi_arr, name="-DI", overlay=False)
+        self.I(lambda: pd.DataFrame({'ADX': self.adx_arr, '+DI': self.pdi_arr, '-DI': self.mdi_arr}), name="ADX/DI", overlay=False)
 
     # ────────────────────────────────────
     #  next()
@@ -101,16 +105,30 @@ class BasisAdxStrategy(Strategy):
         mdi = float(self.mdi_arr[idx])
 
         pdi_5ago = float(self.pdi_arr[idx - 5]) if idx >= 5 else 0.0
+        adx_5ago = float(self.adx_arr[idx - 5]) if idx >= 5 else 0.0
         is_nan = np.isnan(adx) or np.isnan(pdi) or np.isnan(mdi)
 
         # ──────────────────────────────────────────────
-        #  1. EXIT — trailing stop (high < current SL)
+        #  1. EXIT — when in a position
         # ──────────────────────────────────────────────
-        if self._entry_price is not None:
-            if high < sl:
+        if self._entry_sl is not None and self._entry_price is not None:
+            # a) Cut Loss
+            if close < self._entry_sl:
                 self.position.close()
+                self._entry_sl = None
                 self._entry_price = None
                 return
+
+            # b) Take Profit: floating > min %  AND  close < current SL
+            if self._entry_price > 0:
+                floating_pct = ((close - self._entry_price) / self._entry_price) * 100.0
+                if floating_pct > self.tp_min_profit_pct and close < sl:
+                    self.position.close()
+                    self._entry_sl = None
+                    self._entry_price = None
+                    return
+
+            # In position → do NOT check entry signals
             return
 
         # ──────────────────────────────────────────────
@@ -121,6 +139,7 @@ class BasisAdxStrategy(Strategy):
             and close > basis
             and not is_nan
             and adx > 25.0
+            and adx > adx_5ago        # ADX rising (genuine new trend)
             and pdi > mdi
             and pdi > pdi_5ago
         ):
@@ -138,4 +157,6 @@ class BasisAdxStrategy(Strategy):
 
             if size > 0:
                 self.buy(size=size)
+                # 🔒 Capture ONCE — never overwritten until position closes
+                self._entry_sl = sl
                 self._entry_price = close
