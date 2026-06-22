@@ -3,14 +3,14 @@
 Entry (all must be true on same bar):
   - Low > Donchian SL
   - Close > Basis (middle BB = SMA)
-  - ADX > 25
+  - ADX > 20
   - ADX > ADX[5]  (rising ADX)
   - +DI (PDI) > -DI (MDI)
   - PDI > PDI[5]  (rising PDI)
 
-Exit (same as BB+ADX):
+Exit:
   - Cut Loss: Close < entry_sl (fixed SL at entry)
-  - Take Profit: floating > tp_min_profit_pct AND Close < current SL
+  - Take Profit: floating > 0.4 × stop_dist% AND Close < current SL
 
 Sizing: risk-based (risk_pct % of equity / stop_distance).
 """
@@ -31,15 +31,15 @@ class BasisAdxStrategy(Strategy):
     -----
     * Low > Donchian SL
     * Close > Basis (SMA of close over ``bb_period``)
-    * Basis > SMA 200 (long-term bullish trend confirmed)
-    * ADX > 25
+    * ADX > 20
+    * ADX rising (ADX > ADX[5])
     * +DI > -DI
-    * +DI > +DI[5] (PDI rising)
+    * +DI rising (PDI > PDI[5])
 
-    Exit (same as BB+ADX)
-    ---------------------
+    Exit
+    ----
     * **Cut Loss**: Close < entry_sl (fixed SL captured at entry time)
-    * **Take Profit**: unrealised P&L > ``tp_min_profit_pct`` **AND**
+    * **Take Profit**: floating P&L > 0.4 × stop_dist% **AND**
       Close < current Donchian SL (trailing).
     """
 
@@ -54,6 +54,7 @@ class BasisAdxStrategy(Strategy):
     # ---- entry-state (persist across next() calls) ----
     _entry_sl: float | None = None
     _entry_price: float | None = None
+    _tp_threshold_pct: float | None = None   # 1:1 R:R = stop_dist% at entry
 
     # ────────────────────────────────────
     #  init()
@@ -76,12 +77,6 @@ class BasisAdxStrategy(Strategy):
             donchian_sl, self.data.High, self.data.Low,
             self.sl_multiple, self.sl_period,
             name="SL (Donchian)", overlay=True,
-        )
-
-        # ── SMA 200 (long-term trend filter) ──
-        self.sma200 = self.I(
-            lambda arr: pd.Series(arr).rolling(200).mean().values,
-            self.data.Close, name="SMA200", overlay=True,
         )
 
         # ── ADX / PDI / MDI (pre-computed → len-indexing)
@@ -109,11 +104,10 @@ class BasisAdxStrategy(Strategy):
         adx = float(self.adx_arr[idx])
         pdi = float(self.pdi_arr[idx])
         mdi = float(self.mdi_arr[idx])
+        adx_5ago = float(self.adx_arr[idx - 5]) if idx >= 5 else 0.0
 
         pdi_5ago = float(self.pdi_arr[idx - 5]) if idx >= 5 else 0.0
-        sma200 = float(self.sma200[-1])
-        uptrend = basis > sma200       # short-term MA > long-term MA
-        is_nan = np.isnan(adx) or np.isnan(pdi) or np.isnan(mdi) or np.isnan(sma200)
+        is_nan = np.isnan(adx) or np.isnan(pdi) or np.isnan(mdi)
 
         # ──────────────────────────────────────────────
         #  1. EXIT — when in a position
@@ -124,15 +118,18 @@ class BasisAdxStrategy(Strategy):
                 self.position.close()
                 self._entry_sl = None
                 self._entry_price = None
+                self._tp_threshold_pct = None
                 return
 
-            # b) Take Profit: floating > min %  AND  close < current SL
-            if self._entry_price > 0:
+            # b) Take Profit: floating > dynamic TP threshold  AND  close < current SL
+            tp_threshold = self._tp_threshold_pct if self._tp_threshold_pct is not None else self.tp_min_profit_pct
+            if self._entry_price > 0 and tp_threshold is not None:
                 floating_pct = ((close - self._entry_price) / self._entry_price) * 100.0
-                if floating_pct > self.tp_min_profit_pct and close < sl:
+                if floating_pct > tp_threshold and close < sl:
                     self.position.close()
                     self._entry_sl = None
                     self._entry_price = None
+                    self._tp_threshold_pct = None
                     return
 
             # In position → do NOT check entry signals
@@ -145,8 +142,7 @@ class BasisAdxStrategy(Strategy):
             low > sl
             and close > basis
             and not is_nan
-            and adx > 20.0
-            and uptrend            # Basis > SMA 200 (bullish trend confirmed)
+            and adx > 20.0 and adx > adx_5ago  # ADX rising
             and pdi > mdi
             and pdi > pdi_5ago
         ):
@@ -167,3 +163,5 @@ class BasisAdxStrategy(Strategy):
                 # 🔒 Capture ONCE — never overwritten until position closes
                 self._entry_sl = sl
                 self._entry_price = close
+                # Dynamic TP threshold = stop distance % * 0.4  (0.4 R:R)
+                self._tp_threshold_pct = (stop_dist / close) * 100.0 * 0.4
