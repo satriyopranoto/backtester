@@ -198,24 +198,6 @@ screener_result.json           → Hasil screener (dashboard)
 
 ---
 
-## 📁 Dynamic Portfolio Backtester
-
-Backtest multi-saham ada di folder terpisah:
-
-```
-../dynamicportfoliobacktester/
-├── run_us_multi_tf_mod.py    # US 50 stocks, 10yr
-├── run_id_intraday_1h.py     # IDX 116 stocks, 1yr
-├── run_id_multi_tf.py        # IDX 116 stocks, 10yr
-├── run_hybrid_dynamic.py     # US 50 stocks hybrid
-├── run_id_hybrid.py          # IDX 116 stocks hybrid
-├── run_us_mean_reversion.py  # US 50 stocks mean rev
-├── uslist.csv                # Daftar 49 saham US
-└── id_liquid.csv             # Daftar 116 saham IDX
-```
-
----
-
 ## 💡 Tips
 
 1. **Single stock → intraday (1h/30m)** lebih untung karena banyak trade
