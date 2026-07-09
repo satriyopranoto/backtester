@@ -1,4 +1,4 @@
-"""Compare: Original vs Reversal — EUR/USD 1h."""
+"""Compare: Original Basis ADX vs Reversal — IBM 1h."""
 import sys, os, warnings
 warnings.filterwarnings('ignore')
 sys.path.insert(0, os.path.dirname(__file__))
@@ -35,9 +35,9 @@ def donchian_sl(high, low, mul=2.8, period=10):
     ac = pd.Series(ab).replace(0, np.nan).ffill().fillna(0).values
     return np.where(ac == 1, s_curr, r_curr)
 
-# ── Download EUR/USD 1h ──
-print("Downloading EUR/USD 1h...")
-h1 = yf.download('EURUSD=X', period='2y', interval='1h', progress=False, auto_adjust=True)
+# ── Download data ──
+print("Downloading IBM 1h...")
+h1 = yf.download('IBM', period='2y', interval='1h', progress=False, auto_adjust=True)
 if isinstance(h1.columns, pd.MultiIndex):
     h1.columns = h1.columns.get_level_values(0)
 h1.columns = [c.lower() for c in h1.columns]
@@ -48,8 +48,8 @@ if h1.index.tz is not None:
 print(f"  {len(h1)} bars | {h1.index[0]} → {h1.index[-1]}")
 
 # ── Download & map daily HTF ──
-print("Downloading EUR/USD Daily...")
-daily = yf.download('EURUSD=X', period='5y', interval='1d', progress=False, auto_adjust=True)
+print("Downloading IBM Daily...")
+daily = yf.download('IBM', period='5y', interval='1d', progress=False, auto_adjust=True)
 if isinstance(daily.columns, pd.MultiIndex):
     daily.columns = daily.columns.get_level_values(0)
 daily.columns = [c.lower() for c in daily.columns]
@@ -66,7 +66,7 @@ h1 = pd.merge_asof(h1.sort_values('date'), daily_map, left_on='date', right_inde
 h1 = h1.dropna(subset=['htf_pdi','htf_mdi']).drop(columns=['date'])
 print(f"  {len(h1)} bars with HTF data")
 
-# ── Pre-compute indicators ──
+# ── Pre-compute indicators for both strategies ──
 c = h1['Close'].values.astype(float)
 hi = h1['High'].values.astype(float)
 lo = h1['Low'].values.astype(float)
@@ -74,8 +74,11 @@ adx, pdi, mdi = calc_adx(c, hi, lo)
 sl_arr = donchian_sl(hi, lo)
 sma20 = pd.Series(c).rolling(20).mean().values
 
-# ── Strategy A: Original BUY only ──
-class OriginalEur(Strategy):
+# ──────────────────────────────────────────────
+#  Strategy A: Original Basis ADX Multi TF (no reversal) — BUY only
+# ──────────────────────────────────────────────
+class OriginalMultiTf(Strategy):
+    """Original Basis ADX Multi TF Moderat — BUY only, single direction."""
     def init(self):
         self.sl_line = self.I(lambda: sl_arr, name='SL', overlay=True)
         self.sma = self.I(lambda: sma20, name='SMA20', overlay=True)
@@ -90,19 +93,24 @@ class OriginalEur(Strategy):
         sl_v = float(self.sl_line[-1])
         if np.isnan(sl_v) or sl_v <= 0: return
 
+        # Exit
         if self.position:
             if self._entry_sl is not None and close < self._entry_sl:
                 self.position.close()
-                self._entry_sl = None; self._entry_price = None; self._tp_pct = None
+                self._entry_sl = None
                 return
+            # TP
             if self._entry_price and self._tp_pct:
                 fl = ((close - self._entry_price) / self._entry_price) * 100.0
                 if fl > self._tp_pct and close < sl_v:
                     self.position.close()
-                    self._entry_sl = None; self._entry_price = None; self._tp_pct = None
+                    self._entry_sl = None
+                    self._entry_price = None
+                    self._tp_pct = None
                     return
             return
 
+        # Entry — original BUY conditions + Multi TF
         a, p, m = float(adx[i]), float(pdi[i]), float(mdi[i])
         if np.isnan(a) or np.isnan(p) or np.isnan(m): return
         a5 = float(adx[i-5]) if i >= 5 else 0
@@ -124,17 +132,19 @@ class OriginalEur(Strategy):
                     self._entry_price = close
                     self._tp_pct = (sd / close) * 100.0 * 0.4
 
-OriginalEur._entry_sl = None; OriginalEur._entry_price = None; OriginalEur._tp_pct = None
+OriginalMultiTf._entry_sl = None
+OriginalMultiTf._entry_price = None
+OriginalMultiTf._tp_pct = None
 
 
 # ── Run both ──
 results = {}
 for name, strat, label in [
-    ("Original", OriginalEur, "Original Multi TF (BUY only)"),
-    ("Reversal", BasisAdxMultiTfReversal, "Reversal (LONG+SHORT)"),
+    ("Original", OriginalMultiTf, "Original Multi TF (BUY only)"),
+    ("Reversal", BasisAdxMultiTfReversal, "Reversal (LONG+SHORT, reversal exit)"),
 ]:
     print(f"\n  ⏳ Running {label}...")
-    bt = Backtest(h1, strat, cash=100_000, commission=0.0002)
+    bt = Backtest(h1, strat, cash=100_000, commission=0.001)
     s = bt.run()
     results[name] = s
 
@@ -147,23 +157,24 @@ for name, strat, label in [
     print(f"  {'='*40}")
     print(f"  Return    : {s['Return [%]']:+.2f}%")
     print(f"  Buy&Hold  : {s['Buy & Hold Return [%]']:+.2f}%")
-    print(f"  Trades    : {s['# Trades']} ({n_long}L / {n_short}S)")
+    print(f"  Trades    : {s['# Trades']} ({n_long} LONG / {n_short} SHORT)")
     print(f"  Win Rate  : {s['Win Rate [%]']:.1f}%")
     print(f"  Max DD    : -{s['Max. Drawdown [%]']:.2f}%")
     print(f"  Sharpe    : {s['Sharpe Ratio']:.2f}")
     print(f"  Best/Worst: +{s['Best Trade [%]']:.2f}% / {s['Worst Trade [%]']:.2f}%")
+    print(f"  Expectancy: {s['Expectancy [%]']:.2f}%" if hasattr(s, '__getitem__') and 'Expectancy [%]' in s else "")
 
+# ── Summary table ──
 print(f"\n\n{'='*50}")
-print(f"  COMPARISON — EUR/USD H1")
+print(f"  COMPARISON SUMMARY — IBM H1")
 print(f"{'='*50}")
 print(f"  {'Metric':<20} {'Original':>12} {'Reversal':>12}")
 print(f"  {'-'*20} {'-'*12} {'-'*12}")
-r_o, r_r = results["Original"], results["Reversal"]
+r_o = results["Original"]
+r_r = results["Reversal"]
 print(f"  {'Return':<20} {r_o['Return [%]']:>+11.2f}% {r_r['Return [%]']:>+11.2f}%")
 print(f"  {'Buy & Hold':<20} {r_o['Buy & Hold Return [%]']:>+11.2f}% {r_r['Buy & Hold Return [%]']:>+11.2f}%")
 print(f"  {'Trades':<20} {r_o['# Trades']:>11d} {r_r['# Trades']:>11d}")
 print(f"  {'Win Rate':<20} {r_o['Win Rate [%]']:>10.1f}% {r_r['Win Rate [%]']:>10.1f}%")
 print(f"  {'Max DD':<20} -{r_o['Max. Drawdown [%]']:>9.2f}% -{r_r['Max. Drawdown [%]']:>9.2f}%")
 print(f"  {'Sharpe':<20} {r_o['Sharpe Ratio']:>11.2f} {r_r['Sharpe Ratio']:>11.2f}")
-print(f"  {'Best Trade':<20} +{r_o['Best Trade [%]']:>10.2f}% +{r_r['Best Trade [%]']:>10.2f}%")
-print(f"  {'Worst Trade':<20} {r_o['Worst Trade [%]']:>11.2f}% {r_r['Worst Trade [%]']:>11.2f}%")

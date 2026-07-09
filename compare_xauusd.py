@@ -1,4 +1,4 @@
-"""Compare: Original vs Reversal — EUR/USD 1h."""
+"""Compare: Original vs Reversal — XAUUSD 1h."""
 import sys, os, warnings
 warnings.filterwarnings('ignore')
 sys.path.insert(0, os.path.dirname(__file__))
@@ -35,9 +35,9 @@ def donchian_sl(high, low, mul=2.8, period=10):
     ac = pd.Series(ab).replace(0, np.nan).ffill().fillna(0).values
     return np.where(ac == 1, s_curr, r_curr)
 
-# ── Download EUR/USD 1h ──
-print("Downloading EUR/USD 1h...")
-h1 = yf.download('EURUSD=X', period='2y', interval='1h', progress=False, auto_adjust=True)
+# ── Download XAUUSD 1h ──
+print("Downloading XAUUSD 1h...")
+h1 = yf.download('GC=F', period='2y', interval='1h', progress=False, auto_adjust=True)
 if isinstance(h1.columns, pd.MultiIndex):
     h1.columns = h1.columns.get_level_values(0)
 h1.columns = [c.lower() for c in h1.columns]
@@ -48,8 +48,8 @@ if h1.index.tz is not None:
 print(f"  {len(h1)} bars | {h1.index[0]} → {h1.index[-1]}")
 
 # ── Download & map daily HTF ──
-print("Downloading EUR/USD Daily...")
-daily = yf.download('EURUSD=X', period='5y', interval='1d', progress=False, auto_adjust=True)
+print("Downloading XAUUSD Daily...")
+daily = yf.download('GC=F', period='5y', interval='1d', progress=False, auto_adjust=True)
 if isinstance(daily.columns, pd.MultiIndex):
     daily.columns = daily.columns.get_level_values(0)
 daily.columns = [c.lower() for c in daily.columns]
@@ -75,7 +75,7 @@ sl_arr = donchian_sl(hi, lo)
 sma20 = pd.Series(c).rolling(20).mean().values
 
 # ── Strategy A: Original BUY only ──
-class OriginalEur(Strategy):
+class OriginalXau(Strategy):
     def init(self):
         self.sl_line = self.I(lambda: sl_arr, name='SL', overlay=True)
         self.sma = self.I(lambda: sma20, name='SMA20', overlay=True)
@@ -90,6 +90,7 @@ class OriginalEur(Strategy):
         sl_v = float(self.sl_line[-1])
         if np.isnan(sl_v) or sl_v <= 0: return
 
+        # Exit
         if self.position:
             if self._entry_sl is not None and close < self._entry_sl:
                 self.position.close()
@@ -103,6 +104,7 @@ class OriginalEur(Strategy):
                     return
             return
 
+        # Entry
         a, p, m = float(adx[i]), float(pdi[i]), float(mdi[i])
         if np.isnan(a) or np.isnan(p) or np.isnan(m): return
         a5 = float(adx[i-5]) if i >= 5 else 0
@@ -124,17 +126,17 @@ class OriginalEur(Strategy):
                     self._entry_price = close
                     self._tp_pct = (sd / close) * 100.0 * 0.4
 
-OriginalEur._entry_sl = None; OriginalEur._entry_price = None; OriginalEur._tp_pct = None
+OriginalXau._entry_sl = None; OriginalXau._entry_price = None; OriginalXau._tp_pct = None
 
 
 # ── Run both ──
 results = {}
 for name, strat, label in [
-    ("Original", OriginalEur, "Original Multi TF (BUY only)"),
+    ("Original", OriginalXau, "Original Multi TF (BUY only)"),
     ("Reversal", BasisAdxMultiTfReversal, "Reversal (LONG+SHORT)"),
 ]:
     print(f"\n  ⏳ Running {label}...")
-    bt = Backtest(h1, strat, cash=100_000, commission=0.0002)
+    bt = Backtest(h1, strat, cash=100_000, commission=0.001)
     s = bt.run()
     results[name] = s
 
@@ -154,7 +156,7 @@ for name, strat, label in [
     print(f"  Best/Worst: +{s['Best Trade [%]']:.2f}% / {s['Worst Trade [%]']:.2f}%")
 
 print(f"\n\n{'='*50}")
-print(f"  COMPARISON — EUR/USD H1")
+print(f"  COMPARISON — XAUUSD H1")
 print(f"{'='*50}")
 print(f"  {'Metric':<20} {'Original':>12} {'Reversal':>12}")
 print(f"  {'-'*20} {'-'*12} {'-'*12}")
