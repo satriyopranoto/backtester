@@ -1,9 +1,21 @@
-venv/
-__pycache__/
-*.pyc
-*.pyo
-.DS_Store
-data/*.csv
-reports/*.html
-.env
-.hermes-tmp.*
+# Data files (too large for git)
+*.txt
+*.csv
+*.png
+*.html
+
+# Reports
+reports/
+
+# Portfolio output
+portfolio/portfolio_equity.csv
+portfolio/portfolio_report.json
+portfolio/portfolio_trades.csv
+portfolio/portfolio_us_equity.csv
+portfolio/portfolio_us_filtered_equity.csv
+portfolio/portfolio_us_filtered_report.json
+portfolio/portfolio_us_filtered_trades.csv
+portfolio/portfolio_us_report.json
+portfolio/portfolio_us_trades.csv
+portfolio/screener_cache.csv
+portfolio/uslist.csv

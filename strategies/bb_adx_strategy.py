@@ -276,3 +276,53 @@ class BbAdxStrategy(Strategy):
                 # 🔒 Capture ONCE — never overwritten until position closes
                 self._entry_sl = sl
                 self._entry_price = close
+
+
+def add_daily_di(df: pd.DataFrame, di_period: int = 14) -> pd.DataFrame:
+    """
+    Resample OHLCV data to daily, calculate ADX/PDI/MDI on daily bars,
+    then forward-fill daily PDI/MDI back to the original index.
+
+    Adds columns:
+      daily_pdi, daily_mdi, daily_pdi_5ago, daily_mdi_5ago
+
+    Parameters
+    ----------
+    df : DataFrame with DatetimeIndex and OHLCV columns.
+    di_period : period for ADX calculation (default 14).
+
+    Returns
+    -------
+    DataFrame with extra daily DI columns (forward-filled).
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+
+    # Resample to daily
+    daily = df.resample('D').agg({
+        'Open': 'first', 'High': 'max', 'Low': 'min',
+        'Close': 'last', 'Volume': 'sum'
+    }).dropna()
+
+    # Calculate ADX on daily bars
+    daily_adx, daily_pdi, daily_mdi = calc_adx(
+        daily['High'].values.astype(float),
+        daily['Low'].values.astype(float),
+        daily['Close'].values.astype(float),
+        di_period,
+    )
+
+    daily = daily.assign(
+        daily_pdi=daily_pdi,
+        daily_mdi=daily_mdi,
+    )
+    daily['daily_pdi_5ago'] = daily['daily_pdi'].shift(5)
+    daily['daily_mdi_5ago'] = daily['daily_mdi'].shift(5)
+
+    # Also add daily values themselves (not just forward-filled)
+    # so the strategy can access the actual daily DI
+    keep_cols = ['daily_pdi', 'daily_mdi', 'daily_pdi_5ago', 'daily_mdi_5ago']
+    result = df.join(daily[keep_cols])
+    result[keep_cols] = result[keep_cols].ffill()
+
+    return result
