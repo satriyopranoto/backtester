@@ -1,16 +1,9 @@
-"""Middle BB (Basis) + ADX Strategy with optional Multi-TF daily DI confirmation.
+"""Basis ADX Strategy — 3 variants: Standard, Multi-TF (dominance), Multi-TF Modif (dominance + rising).
 
-Entry (all must be true on same bar):
-  - Low > Donchian SL
-  - Close > Basis (middle BB = SMA)
-  - ADX > 20
-  - ADX > ADX[5]  (rising ADX)
-  - +DI (PDI) > -DI (MDI)
-  - PDI > PDI[5]  (rising PDI)
-
-Multi-TF (optional, if daily_pdi/daily_mdi columns present):
-  - BUY:  also requires Daily +DI > Daily +DI[5]
-  - SHORT: Close < Basis, MDI > PDI, MDI rising, Daily -DI > Daily -DI[5]
+Class hierarchy:
+  BasisAdxStrategy      → H1 only (standard)
+  BasisAdxMultiTf       → + daily +DI > daily -DI (LONG) / daily -DI > daily +DI (SHORT)
+  BasisAdxMultiTfModif  → + daily DI dominance + daily DI rising (shift 1)
 
 Exit (LONG):
   - Cut Loss: Close < entry_sl (fixed SL at entry)
@@ -32,58 +25,52 @@ from backtesting import Strategy
 from strategies.bb_adx_strategy import donchian_sl, calc_adx
 
 
+# ═══════════════════════════════════════════════════════════════
+# 1. STANDARD — pure H1, no multi-TF
+# ═══════════════════════════════════════════════════════════════
+
 class BasisAdxStrategy(Strategy):
-    """Middle Bollinger Band (Basis) + ADX confirmation.
+    """Standard — H1 Basis ADX, no multi-TF filter.
 
-    Entry
-    -----
-    * Low > Donchian SL
-    * Close > Basis (SMA of close over ``bb_period``)
-    * ADX > 20
-    * ADX rising (ADX > ADX[5])
-    * +DI > -DI
-    * +DI rising (PDI > PDI[5])
+    Entry (LONG, all must be TRUE on same bar):
+      * Low > Donchian SL
+      * Close > Basis (SMA20)
+      * ADX > 20
+      * ADX rising (ADX > ADX[5])
+      * +DI > -DI
+      * +DI rising (PDI > PDI[5])
 
-    Multi-TF (when daily_pdi/mdi columns present in data):
-    * BUY:  also requires daily_pdi > daily_pdi_5ago
-    * SHORT: Close < Basis, MDI > PDI, MDI rising,
-             daily_mdi > daily_mdi_5ago
+    Entry (SHORT, all must be TRUE on same bar):
+      * High < Donchian SL
+      * Close < Basis
+      * ADX > 20, ADX rising
+      * -DI > +DI
+      * -DI rising (MDI > MDI[5])
 
-    Exit (LONG)
-    ----
-    * **Cut Loss**: Close < entry_sl (fixed SL captured at entry time)
-    * **Take Profit**: floating P&L > 0.4 x stop_dist% **AND**
-      Close < current Donchian SL (trailing).
-
-    Exit (SHORT)
-    ----
-    * **Cut Loss**: Close > entry_sl
-    * **Take Profit**: floating P&L > 0.4 x stop_dist% **AND**
-      Close > current Donchian SL (trailing).
+    Exit via Cut Loss or Take Profit only — no time-based exit.
     """
 
     # ---- tunable parameters ----
-    bb_period = 20                # SMA period for basis (middle BB)
+    bb_period = 20
     adx_period = 14
     sl_multiple = 2.8
     sl_period = 10
-    tp_min_profit_pct = 0.2      # percent
-    risk_pct = 1.0                # % equity risked per trade
+    tp_min_profit_pct = 0.2
+    risk_pct = 1.0
 
-    # ---- entry-state (persist across next() calls) ----
+    # ---- entry-state ----
     _entry_sl: float | None = None
     _entry_price: float | None = None
     _tp_threshold_pct: float | None = None
-    _is_short: bool = False       # True = short position
+    _is_short: bool = False
 
     # ────────────────────────────────────
     #  init()
     # ────────────────────────────────────
 
     def init(self) -> None:
-        """Compute indicators once."""
-
-        # ── Basis (middle BB = SMA of close) ─────────
+        """Compute H1 indicators once."""
+        # ── Basis (SMA of close) ──
         def _basis(arr, period):
             return pd.Series(arr).rolling(period).mean().values
 
@@ -92,25 +79,38 @@ class BasisAdxStrategy(Strategy):
             name=f"Basis({self.bb_period})", overlay=True,
         )
 
-        # ── SL (Donchian, wrapped → safe [-1] indexing) ──
+        # ── Donchian SL ──
         self.sl = self.I(
             donchian_sl, self.data.High, self.data.Low,
             self.sl_multiple, self.sl_period,
             name="SL (Donchian)", overlay=True,
         )
 
-        # ── ADX / PDI / MDI (pre-computed → len-indexing)
+        # ── H1 ADX / PDI / MDI ──
         self.adx_arr, self.pdi_arr, self.mdi_arr = calc_adx(
             np.asarray(self.data.High),
             np.asarray(self.data.Low),
             np.asarray(self.data.Close),
             self.adx_period,
         )
-        self.I(lambda: pd.DataFrame({'ADX': self.adx_arr, '+DI': self.pdi_arr, '-DI': self.mdi_arr}), name="ADX/DI", overlay=False)
+        self.I(
+            lambda: pd.DataFrame({
+                'ADX': self.adx_arr, '+DI': self.pdi_arr, '-DI': self.mdi_arr,
+            }),
+            name="ADX/DI", overlay=False,
+        )
 
-        # ── Detect if daily DI columns available (multi-TF) ──
-        self._has_daily = hasattr(self.data, 'daily_pdi') and hasattr(self.data, 'daily_mdi') and \
-                          hasattr(self.data, 'daily_pdi_5ago') and hasattr(self.data, 'daily_mdi_5ago')
+    # ────────────────────────────────────
+    #  Template hooks (override in subclasses)
+    # ────────────────────────────────────
+
+    def _mtf_long_ok(self) -> bool:
+        """Override to add multi-TF LONG filter. Return True to allow trade."""
+        return True
+
+    def _mtf_short_ok(self) -> bool:
+        """Override to add multi-TF SHORT filter. Return True to allow trade."""
+        return True
 
     # ────────────────────────────────────
     #  next()
@@ -129,89 +129,49 @@ class BasisAdxStrategy(Strategy):
         pdi = float(self.pdi_arr[idx])
         mdi = float(self.mdi_arr[idx])
         adx_5ago = float(self.adx_arr[idx - 5]) if idx >= 5 else 0.0
-
         pdi_5ago = float(self.pdi_arr[idx - 5]) if idx >= 5 else 0.0
         mdi_5ago = float(self.mdi_arr[idx - 5]) if idx >= 5 else 0.0
         is_nan = np.isnan(adx) or np.isnan(pdi) or np.isnan(mdi)
 
-        # ── Multi-TF daily DI values ──
-        daily_pdi_ok = True
-        daily_mdi_ok = True
-        if self._has_daily:
-            dpdi = float(self.data.daily_pdi[-1])
-            dpdi5 = float(self.data.daily_pdi_5ago[-1])
-            dmdi = float(self.data.daily_mdi[-1])
-            dmdi5 = float(self.data.daily_mdi_5ago[-1])
-            daily_pdi_ok = not np.isnan(dpdi) and not np.isnan(dpdi5) and dpdi > dpdi5
-            daily_mdi_ok = not np.isnan(dmdi) and not np.isnan(dmdi5) and dmdi > dmdi5
-
-        # ──────────────────────────────────────────────
-        #  1. EXIT — when in a position
-        # ──────────────────────────────────────────────
+        # ── 1. EXIT ──
         if self._entry_sl is not None and self._entry_price is not None:
             if self._is_short:
-                # ── SHORT exit ──
-                # a) Cut Loss: price broke above SL (resistance)
+                # SHORT exit
                 if close > self._entry_sl:
-                    self.position.close()
-                    self._reset()
-                    return
-
-                # b) Take Profit: floating > threshold AND close > current SL (pulled back)
-                tp_threshold = self._tp_threshold_pct if self._tp_threshold_pct is not None else self.tp_min_profit_pct
-                if self._entry_price > 0 and tp_threshold is not None:
-                    # For shorts, profit = entry_price - close (price went down)
+                    self.position.close(); self._reset(); return
+                tp_th = self._tp_threshold_pct if self._tp_threshold_pct is not None else self.tp_min_profit_pct
+                if self._entry_price > 0 and tp_th is not None:
                     floating_pct = ((self._entry_price - close) / self._entry_price) * 100.0
-                    if floating_pct > tp_threshold and close > sl:
-                        self.position.close()
-                        self._reset()
-                        return
+                    if floating_pct > tp_th and close > sl:
+                        self.position.close(); self._reset(); return
             else:
-                # ── LONG exit ──
-                # a) Cut Loss
+                # LONG exit
                 if close < self._entry_sl:
-                    self.position.close()
-                    self._reset()
-                    return
-
-                # b) Take Profit: floating > dynamic TP threshold AND close < current SL
-                tp_threshold = self._tp_threshold_pct if self._tp_threshold_pct is not None else self.tp_min_profit_pct
-                if self._entry_price > 0 and tp_threshold is not None:
+                    self.position.close(); self._reset(); return
+                tp_th = self._tp_threshold_pct if self._tp_threshold_pct is not None else self.tp_min_profit_pct
+                if self._entry_price > 0 and tp_th is not None:
                     floating_pct = ((close - self._entry_price) / self._entry_price) * 100.0
-                    if floating_pct > tp_threshold and close < sl:
-                        self.position.close()
-                        self._reset()
-                        return
-
-            # In position → do NOT check entry signals
+                    if floating_pct > tp_th and close < sl:
+                        self.position.close(); self._reset(); return
             return
 
-        # ──────────────────────────────────────────────
-        #  2. ENTRY — when flat
-        # ──────────────────────────────────────────────
-
-        # ── LONG entry ──
+        # ── 2. ENTRY ──
+        # LONG
         if (
-            low > sl
-            and close > basis
-            and not is_nan
-            and adx > 20.0 and adx > adx_5ago  # ADX rising
-            and pdi > mdi
-            and pdi > pdi_5ago
-            and daily_pdi_ok                         # multi-TF: daily +DI rising
+            low > sl and close > basis and not is_nan
+            and adx > 20.0 and adx > adx_5ago
+            and pdi > mdi and pdi > pdi_5ago
+            and self._mtf_long_ok()
         ):
             self._enter_long(close, sl)
             return
 
-        # ── SHORT entry ──
+        # SHORT
         if (
-            high < sl                                  # price below SL (resistance)
-            and close < basis                          # Close below Basis
-            and not is_nan
-            and adx > 20.0 and adx > adx_5ago          # ADX rising
-            and mdi > pdi                              # -DI > +DI
-            and mdi > mdi_5ago                         # -DI rising
-            and daily_mdi_ok                           # multi-TF: daily -DI rising
+            high < sl and close < basis and not is_nan
+            and adx > 20.0 and adx > adx_5ago
+            and mdi > pdi and mdi > mdi_5ago
+            and self._mtf_short_ok()
         ):
             self._enter_short(close, sl)
             return
@@ -232,7 +192,6 @@ class BasisAdxStrategy(Strategy):
         size = min(size, max_by_cash)
         if size <= 0:
             return
-
         self.buy(size=size)
         self._entry_sl = sl
         self._entry_price = close
@@ -240,7 +199,7 @@ class BasisAdxStrategy(Strategy):
         self._is_short = False
 
     def _enter_short(self, close: float, sl: float) -> None:
-        stop_dist = abs(sl - close)  # distance for short
+        stop_dist = abs(sl - close)
         if stop_dist <= 0:
             return
         risk_amount = self.equity * (self.risk_pct / 100.0)
@@ -251,7 +210,6 @@ class BasisAdxStrategy(Strategy):
         size = min(size, max_by_cash)
         if size <= 0:
             return
-
         self.sell(size=size)
         self._entry_sl = sl
         self._entry_price = close
@@ -263,3 +221,94 @@ class BasisAdxStrategy(Strategy):
         self._entry_price = None
         self._tp_threshold_pct = None
         self._is_short = False
+
+
+# ═══════════════════════════════════════════════════════════════
+# 2. MULTI-TF — daily DI dominance
+#    LONG:  daily +DI > daily -DI
+#    SHORT: daily -DI > daily +DI
+# ═══════════════════════════════════════════════════════════════
+
+class BasisAdxMultiTf(BasisAdxStrategy):
+    """Multi-TF — standard H1 conditions + daily DI dominance filter.
+
+    Adds columns ``daily_pdi`` and ``daily_mdi`` (from ``add_daily_di()``).
+
+    LONG  → H1 conditions + **daily +DI > daily -DI**
+    SHORT → H1 conditions + **daily -DI > daily +DI**
+    """
+
+    def init(self) -> None:
+        super().init()
+        self._has_daily_dom = (
+            hasattr(self.data, 'daily_pdi') and hasattr(self.data, 'daily_mdi')
+        )
+
+    def _daily_pdi(self) -> float:
+        return float(self.data.daily_pdi[-1])
+
+    def _daily_mdi(self) -> float:
+        return float(self.data.daily_mdi[-1])
+
+    def _mtf_long_ok(self) -> bool:
+        if not self._has_daily_dom:
+            return True
+        dp = self._daily_pdi()
+        dm = self._daily_mdi()
+        if np.isnan(dp) or np.isnan(dm):
+            return True
+        return dp > dm
+
+    def _mtf_short_ok(self) -> bool:
+        if not self._has_daily_dom:
+            return True
+        dp = self._daily_pdi()
+        dm = self._daily_mdi()
+        if np.isnan(dp) or np.isnan(dm):
+            return True
+        return dm > dp
+
+
+# ═══════════════════════════════════════════════════════════════
+# 3. MULTI-TF MODIF — daily DI dominance + rising
+#    LONG:  daily +DI > daily -DI  AND  daily +DI > daily +DI[1]
+#    SHORT: daily -DI > daily +DI  AND  daily -DI > daily -DI[1]
+# ═══════════════════════════════════════════════════════════════
+
+class BasisAdxMultiTfModif(BasisAdxMultiTf):
+    """Multi-TF Modif — standard H1 + daily DI dominance + daily DI rising (shift 1).
+
+    Adds columns ``daily_pdi_1ago`` and ``daily_mdi_1ago``.
+
+    LONG  → H1 + daily +DI > daily -DI + **daily +DI > daily +DI[1]**
+    SHORT → H1 + daily -DI > daily +DI + **daily -DI > daily -DI[1]**
+    """
+
+    def init(self) -> None:
+        super().init()
+        self._has_daily_rise = (
+            hasattr(self.data, 'daily_pdi_1ago') and hasattr(self.data, 'daily_mdi_1ago')
+        )
+
+    def _mtf_long_ok(self) -> bool:
+        # Parent checks daily +DI > daily -DI
+        if not super()._mtf_long_ok():
+            return False
+        if not self._has_daily_rise:
+            return True
+        dp = self._daily_pdi()
+        dp1 = float(self.data.daily_pdi_1ago[-1])
+        if np.isnan(dp) or np.isnan(dp1):
+            return True
+        return dp > dp1
+
+    def _mtf_short_ok(self) -> bool:
+        if not super()._mtf_short_ok():
+            return False
+        if not self._has_daily_rise:
+            return True
+        dm = self._daily_mdi()
+        dm1 = float(self.data.daily_mdi_1ago[-1])
+        if np.isnan(dm) or np.isnan(dm1):
+            return True
+        return dm > dm1

@@ -316,12 +316,12 @@ def add_daily_di(df: pd.DataFrame, di_period: int = 14) -> pd.DataFrame:
         daily_pdi=daily_pdi,
         daily_mdi=daily_mdi,
     )
-    daily['daily_pdi_5ago'] = daily['daily_pdi'].shift(5)
-    daily['daily_mdi_5ago'] = daily['daily_mdi'].shift(5)
+    daily['daily_pdi_1ago'] = daily['daily_pdi'].shift(1)
+    daily['daily_mdi_1ago'] = daily['daily_mdi'].shift(1)
 
     # Also add daily values themselves (not just forward-filled)
     # so the strategy can access the actual daily DI
-    keep_cols = ['daily_pdi', 'daily_mdi', 'daily_pdi_5ago', 'daily_mdi_5ago']
+    keep_cols = ['daily_pdi', 'daily_mdi', 'daily_pdi_1ago', 'daily_mdi_1ago']
     result = df.join(daily[keep_cols])
     result[keep_cols] = result[keep_cols].ffill()
 

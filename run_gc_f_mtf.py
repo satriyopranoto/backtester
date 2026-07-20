@@ -1,5 +1,5 @@
 """
-Backtest 3 variant Basis ADX pada EURUSD 1H.
+Backtest 3 variant Basis ADX pada GC=F (Gold Futures) 1H.
 
 Membandingkan:
   1) STANDARD     — H1 only (tanpa daily DI)
@@ -21,9 +21,9 @@ from strategies.bb_adx_strategy import add_daily_di
 
 BASE = Path(r"C:\Users\satri\code\backtester")
 
-# ── Load EURUSD 1H data ────────────────────────────────────
-print("📂 Loading EURUSD 1H data...")
-df = pd.read_csv(BASE / "EURUSD_1h_yf.txt")
+# ── Load GC=F 1H data ──────────────────────────────────────
+print("📂 Loading GC=F 1H data...")
+df = pd.read_csv(BASE / "GC_F_1h_yf.txt")
 df["Date"] = pd.to_datetime(df["Datetime"], utc=True)
 df = df.drop(columns=["Datetime"])
 df = df.set_index("Date").sort_index()
@@ -32,6 +32,7 @@ df = df.dropna(subset=["Open", "High", "Low", "Close"])
 keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
 df = df[keep]
 print(f"   {len(df)} bars ({df.index[0]} — {df.index[-1]})")
+print(f"   Range: ${df['Low'].min():.2f} — ${df['High'].max():.2f}")
 
 # ── Add daily DI columns for multi-TF variants ──
 print("\n📊 Menambahkan daily DI columns...")
@@ -51,7 +52,7 @@ for name, strat, data, desc in runs:
     print(f"\n{'='*55}")
     print(f"  {name}: {desc}")
     print(f"{'='*55}")
-    bt = Backtest(data, strat, cash=100_000, commission=0.0001, finalize_trades=True)
+    bt = Backtest(data, strat, cash=100_000, commission=0.001, finalize_trades=True)
     s = bt.run()
     results[name] = (s, bt)
 
@@ -70,7 +71,7 @@ for name, strat, data, desc in runs:
 
 # ── Summary ──
 print(f"\n\n{'='*60}")
-print(f"  📊 PERBANDINGAN — EURUSD 1H")
+print(f"  📊 PERBANDINGAN — GC=F 1H")
 print(f"{'='*60}")
 headers = ["Metric", "STANDARD", "MULTI-TF", "MODIF"]
 print(f"  {headers[0]:<20} {headers[1]:>12} {headers[2]:>12} {headers[3]:>12}")
@@ -100,7 +101,7 @@ reports_dir = BASE / "reports"
 reports_dir.mkdir(exist_ok=True)
 for name, _, _, desc in runs:
     _, bt = results[name]
-    fname = reports_dir / f"EURUSD_basis_adx_1h_{name.lower()}.html"
+    fname = reports_dir / f"GCF_basis_adx_1h_{name.lower()}.html"
     bt.plot(filename=str(fname), open_browser=False)
     print(f"  📁 {name}: {fname.name}")
 
